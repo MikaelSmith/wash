@@ -22,6 +22,7 @@ type StreamBuffer struct {
 	update            time.Time
 	size              int
 	streaming         int
+	deferred          chan bool
 	postProcessStream func(data []byte, writeIndex int) (int, int)
 }
 
@@ -65,8 +66,12 @@ func (b *StreamBuffer) Stream(cb func() (io.ReadCloser, error), confirm chan boo
 		}
 	}()
 
-	if count := b.incr(); count > 1 {
+	if count := b.incr(); count > 1 || (count == 1 && b.deferred != nil) {
 		// Only initiate streaming if this is the first request.
+		if b.deferred != nil {
+			log.Printf("Cancelling close")
+			b.deferred <- false
+		}
 		return
 	}
 
@@ -162,11 +167,25 @@ func (b *StreamBuffer) ReadAt(p []byte, off int64) (int, error) {
 	return b.reader.ReadAt(p, off)
 }
 
+func (b *StreamBuffer) deferredClose() {
+	log.Printf("Deferring close")
+	select {
+	case <-b.deferred:
+		log.Printf("Close cancelled")
+	case <-time.After(5 * time.Second):
+		log.Printf("Closing input")
+		b.input.Close()
+		b.deferred = nil
+	}
+}
+
 // Close implements the Closer interface. Includes reference counting of
 // times a stream was requested and only closes the input when that reaches 0.
 func (b *StreamBuffer) Close() error {
 	if count := b.decr(); count == 0 {
-		return b.input.Close()
+		b.deferred = make(chan bool)
+		go b.deferredClose()
+		return nil
 	}
 	return nil
 }
