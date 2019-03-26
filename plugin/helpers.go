@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
-	"strings"
 	"syscall"
 	"time"
 
@@ -39,12 +38,7 @@ func CName(e Entry) string {
 	// We make the CName a separate function instead of embedding it
 	// in the Entry interface because doing so prevents plugin authors
 	// from overriding it.
-	return strings.Replace(
-		e.Name(),
-		"/",
-		string(e.slashReplacementChar()),
-		-1,
-	)
+	return e.cname()
 }
 
 // Path returns the entry's path rooted at Wash's mountpoint. This is what

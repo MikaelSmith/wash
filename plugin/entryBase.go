@@ -3,6 +3,7 @@ package plugin
 import (
 	"context"
 	"flag"
+	"strings"
 	"time"
 )
 
@@ -23,6 +24,7 @@ var actionOpCodeToNameMap = [3]string{"List", "Open", "Metadata"}
 // You should use plugin.NewEntry to create new EntryBase objects.
 type EntryBase struct {
 	name               string
+	canonicalName      string
 	slashReplacementCh rune
 	// washID represents the entry's wash ID. It is set in CachedList.
 	washID string
@@ -31,10 +33,11 @@ type EntryBase struct {
 
 // newEntryBase is needed by NewEntry, NewRegistry,
 // and some of the cache tests
-func newEntryBase(name string) EntryBase {
+func newEntryBase(name string, slashReplacementCh rune) EntryBase {
 	e := EntryBase{
 		name:               name,
-		slashReplacementCh: '#',
+		slashReplacementCh: slashReplacementCh,
+		canonicalName:      strings.Replace(name, "/", string(slashReplacementCh), -1),
 	}
 
 	for op := range e.ttl {
@@ -44,13 +47,18 @@ func newEntryBase(name string) EntryBase {
 	return e
 }
 
-// NewEntry creates a new entry
+// NewEntry creates a new entry, and replaces any '/' with '#'
 func NewEntry(name string) EntryBase {
+	return NewEntryWithSlashReplacementChar(name, '#')
+}
+
+// NewEntryWithSlashReplacementChar creates a new entry, and replaces any '/' with the specified rune
+func NewEntryWithSlashReplacementChar(name string, slashReplacementCh rune) EntryBase {
 	if name == "" {
 		panic("plugin.NewEntry: received an empty name")
 	}
 
-	return newEntryBase(name)
+	return newEntryBase(name, slashReplacementCh)
 }
 
 // ENTRY INTERFACE
@@ -60,6 +68,10 @@ func NewEntry(name string) EntryBase {
 // the appropriate API calls within your plugin.
 func (e *EntryBase) Name() string {
 	return e.name
+}
+
+func (e *EntryBase) cname() string {
+	return e.canonicalName
 }
 
 // Attr returns the entry's attributes. The default return value
@@ -93,20 +105,6 @@ func (e *EntryBase) getTTLOf(op actionOpCode) time.Duration {
 
 // OTHER METHODS USED TO FACILITATE PLUGIN DEVELOPMENT
 // AND TESTING
-
-/*
-SetSlashReplacementChar overrides the default '/' replacement
-character of '#' to char. The '/' replacement character is used
-when determining the entry's cname. See plugin.CName for more
-details.
-*/
-func (e *EntryBase) SetSlashReplacementChar(char rune) {
-	if char == '/' {
-		panic("e.SetSlashReplacementChar called with '/'")
-	}
-
-	e.slashReplacementCh = char
-}
 
 // SetTTLOf sets the specified op's TTL
 func (e *EntryBase) SetTTLOf(op actionOpCode, ttl time.Duration) {

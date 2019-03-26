@@ -82,21 +82,24 @@ func (e decodedExternalPluginEntry) toExternalPluginEntry() (*externalPluginEntr
 		return nil, err
 	}
 
-	entry := &externalPluginEntry{
-		EntryBase:        NewEntry(e.Name),
-		supportedActions: e.SupportedActions,
-		state:            e.State,
-		attr:             attr,
-	}
-	entry.setCacheTTLs(e.CacheTTLs)
+	var ebase EntryBase
 	if e.SlashReplacementChar != "" {
 		if len([]rune(e.SlashReplacementChar)) > 1 {
 			msg := fmt.Sprintf("e.SlashReplacementChar: received string %v instead of a character", e.SlashReplacementChar)
 			panic(msg)
 		}
 
-		entry.SetSlashReplacementChar([]rune(e.SlashReplacementChar)[0])
+		ebase = NewEntryWithSlashReplacementChar(e.Name, []rune(e.SlashReplacementChar)[0])
+	} else {
+		ebase = NewEntry(e.Name)
 	}
+	entry := &externalPluginEntry{
+		EntryBase:        ebase,
+		supportedActions: e.SupportedActions,
+		state:            e.State,
+		attr:             attr,
+	}
+	entry.setCacheTTLs(e.CacheTTLs)
 
 	return entry, nil
 }
