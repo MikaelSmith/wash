@@ -55,6 +55,7 @@ func (is *ec2InstancesDir) List(ctx context.Context) ([]plugin.Entry, error) {
 				awsSDK.StringValue(instance.InstanceId),
 				is.session,
 				is.client,
+				instance,
 			)
 		}
 

@@ -15,6 +15,7 @@ import (
 	ec2Client "github.com/aws/aws-sdk-go/service/ec2"
 	"github.com/aws/aws-sdk-go/service/ssm"
 	"github.com/kballard/go-shellquote"
+	"github.com/puppetlabs/wash/datastore"
 	"github.com/puppetlabs/wash/journal"
 	"github.com/puppetlabs/wash/plugin"
 
@@ -30,6 +31,7 @@ type ec2Instance struct {
 	cloudwatchClient        *cloudwatchlogs.CloudWatchLogs
 	latestConsoleOutputOnce sync.Once
 	entries                 []plugin.Entry
+	describe                datastore.Var
 }
 
 // These constants represent the possible states that the EC2 instance
@@ -44,15 +46,17 @@ const (
 	EC2InstanceStopped           = 80
 )
 
-func newEC2Instance(ctx context.Context, ID string, session *session.Session, client *ec2Client.EC2) *ec2Instance {
+func newEC2Instance(ctx context.Context, ID string, session *session.Session, client *ec2Client.EC2, describe *ec2Client.Instance) *ec2Instance {
 	ec2Instance := &ec2Instance{
 		EntryBase:        plugin.NewEntry(ID),
 		session:          session,
 		client:           client,
 		ssmClient:        ssm.New(session),
 		cloudwatchClient: cloudwatchlogs.New(session),
+		describe:         datastore.NewVar(30 * time.Second),
 	}
 	ec2Instance.DisableDefaultCaching()
+	ec2Instance.describe.Set(newDescribeInstanceResult(describe))
 
 	ec2Instance.entries = []plugin.Entry{
 		newEC2InstanceMetadataJSON(ec2Instance),
@@ -67,47 +71,48 @@ type describeInstanceResult struct {
 	metadata *ec2Client.Instance
 }
 
+func newDescribeInstanceResult(meta *ec2Client.Instance) describeInstanceResult {
+	result := describeInstanceResult{metadata: meta}
+
+	// AWS does not include the EC2 instance's ctime in its
+	// metadata. It also does not include the EC2 instance's
+	// last state transition time (mtime). Thus, we try to "guess"
+	// reasonable values for ctime and mtime by looping over each
+	// block device's attachment time and the instance's launch time.
+	// The oldest of these times is the ctime; the newest is the mtime.
+	result.attr.Ctime = awsSDK.TimeValue(result.metadata.LaunchTime)
+	result.attr.Mtime = result.attr.Ctime
+	for _, mapping := range result.metadata.BlockDeviceMappings {
+		attachTime := awsSDK.TimeValue(mapping.Ebs.AttachTime)
+
+		if attachTime.Before(result.attr.Ctime) {
+			result.attr.Ctime = attachTime
+		}
+
+		if attachTime.After(result.attr.Mtime) {
+			result.attr.Mtime = attachTime
+		}
+	}
+	return result
+}
+
 func (inst *ec2Instance) cachedDescribeInstance(ctx context.Context) (describeInstanceResult, error) {
-	info, err := plugin.CachedOp("DescribeInstance", inst, 15*time.Second, func() (interface{}, error) {
+	info, err := inst.describe.Update(func() (interface{}, error) {
 		request := &ec2Client.DescribeInstancesInput{
 			InstanceIds: []*string{
 				awsSDK.String(inst.Name()),
 			},
 		}
 
-		resp, err := inst.client.DescribeInstances(request)
+		resp, err := inst.client.DescribeInstancesWithContext(ctx, request)
 		if err != nil {
 			return nil, err
 		}
 
-		result := describeInstanceResult{}
-
 		// The API returns an error for an invalid instance ID. Since
 		// our API call succeeded, the response is guaranteed to contain
 		// the instance's metadata
-		result.metadata = resp.Reservations[0].Instances[0]
-
-		// AWS does not include the EC2 instance's ctime in its
-		// metadata. It also does not include the EC2 instance's
-		// last state transition time (mtime). Thus, we try to "guess"
-		// reasonable values for ctime and mtime by looping over each
-		// block device's attachment time and the instance's launch time.
-		// The oldest of these times is the ctime; the newest is the mtime.
-		result.attr.Ctime = awsSDK.TimeValue(result.metadata.LaunchTime)
-		result.attr.Mtime = result.attr.Ctime
-		for _, mapping := range result.metadata.BlockDeviceMappings {
-			attachTime := awsSDK.TimeValue(mapping.Ebs.AttachTime)
-
-			if attachTime.Before(result.attr.Ctime) {
-				result.attr.Ctime = attachTime
-			}
-
-			if attachTime.After(result.attr.Mtime) {
-				result.attr.Mtime = attachTime
-			}
-		}
-
-		return result, nil
+		return newDescribeInstanceResult(resp.Reservations[0].Instances[0]), nil
 	})
 
 	if err != nil {
