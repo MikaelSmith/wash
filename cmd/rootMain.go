@@ -23,7 +23,9 @@ func writeAlias(path, subcommand string) error {
 	if err != nil {
 		return err
 	}
-	_, err = f.WriteString("#!/bin/sh\nexec wash " + subcommand + " \"$@\"")
+
+	// Use an Embedded config option to specialize help for the wash shell environment.
+	_, err = f.WriteString("#!/bin/sh\nWASH_EMBEDDED=1 exec wash " + subcommand + " \"$@\"")
 	f.Close()
 	return err
 }
